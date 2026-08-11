@@ -11,6 +11,7 @@
 import json
 import sys
 import time
+import datetime as dt
 
 sys.path.append("/home/user/xavier_nx_ai")
 
@@ -54,9 +55,13 @@ def save_positions(pos):
         json.dump(pos, f, ensure_ascii=False, indent=4)
 
 
-def save_trade(ticker, buy_price, sell_price, hold_hours, reason):
+def save_trade(ticker, buy_price, sell_price, hold_hours, reason,
+               buy_time=None):
+    """청산 기록. **시각을 반드시 남긴다** — 없으면 기간별·국면별 분석이
+    영원히 불가능하다(2026-08-10 이전 13건이 그래서 날짜를 잃었다)."""
     logs = _load_json(LOG_FILE, [])
     profit = (sell_price / buy_price - 1) * 100 - FEE * 100
+    now = dt.datetime.now()
     logs.append({
         "ticker": ticker,
         "buy_price": buy_price,
@@ -64,6 +69,9 @@ def save_trade(ticker, buy_price, sell_price, hold_hours, reason):
         "profit": round(profit, 2),
         "hold_hours": round(hold_hours, 1),
         "reason": reason,
+        "sell_time": now.isoformat(timespec="seconds"),
+        "buy_time": (dt.datetime.fromtimestamp(buy_time).isoformat(timespec="seconds")
+                     if buy_time else None),
     })
     with open(LOG_FILE, "w", encoding="utf-8") as f:
         json.dump(logs, f, ensure_ascii=False, indent=4)
@@ -118,7 +126,8 @@ def manage_htf():
 
             save_trade(
                 ticker, buy_price, current_price,
-                hold_hours, "📉 트레일청산"
+                hold_hours, "📉 트레일청산",
+                buy_time=pos.get("buy_time")
             )
 
             sell_alarm(
