@@ -3,7 +3,9 @@
 
 백테스트로 검증된 파라미터 (하락장에서도 +25%, 손익비 2.0):
   - 진입: 직전 20봉(1h) 고점 상향 돌파 (Donchian breakout) + 종가 > ma50(1h)
-  - 국면: BTC 일봉 종가 > BTC 일봉 ma50 일 때만 신규 매수 (위험선호 구간)
+  - 국면: BTC 일봉 종가 > BTC 일봉 **ma20** 일 때만 신규 매수 (위험선호 구간)
+          ma50에서 ma20으로 교체(2026-08-11). MA50은 후행이라 하락 초반을
+          통과시킨다. 3.1년 재측정에서 ma20이 누적 +71%·최대낙폭 -41%.
   - 청산: 샹들리에 트레일링 = 진입후 최고가 - 3×ATR(14)
 """
 
@@ -13,6 +15,13 @@ DC_ENTRY = 20       # 돌파 기준 봉수
 ATR_N = 14
 MA_TREND = 50       # 1h 장기추세 필터
 MOM_LOOKBACK = 24   # 24시간 모멘텀 (후보 정렬용)
+REGIME_MA = 20      # BTC 일봉 국면 판단 MA. 50 -> 20 (2026-08-11)
+                    # 근거: 업비트 1시간봉 3.1년 재측정(htf_tune.py regime).
+                    #   ma50 +218,884원 / 낙폭 -100,758 / 2025+ +30,523
+                    #   ma20 +373,791원 / 낙폭  -59,549 / 2025+ +109,439
+                    # 허용일 비율은 51%로 동일 — 더 자주 막는 게 아니라
+                    # 더 이른 타이밍에 막는다. 필터 자체의 값어치도 확인:
+                    # 필터 없이 돌리면 -71,270원(손익비 0.96)이다.
 
 
 def get_htf(ticker):
@@ -81,14 +90,14 @@ def get_btc_regime():
         count=80
     )
 
-    if df is None or len(df) < 52:
+    if df is None or len(df) < REGIME_MA + 2:
         return False
 
-    ma50 = df["close"].rolling(50).mean()
+    ma = df["close"].rolling(REGIME_MA).mean()
 
     # 마지막 '완성된' 일봉 기준 (iloc[-1]은 형성중)
     return bool(
-        df["close"].iloc[-2] > ma50.iloc[-2]
+        df["close"].iloc[-2] > ma.iloc[-2]
     )
 
 
