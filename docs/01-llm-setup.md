@@ -8,7 +8,7 @@ Jetson Xavier NX 한 대에서 클라우드 API 없이 LLM을 직접 서빙하�
 
 작은 엣지 디바이스(6.8GB 공유 메모리)에서 실시간에 가깝게 응답하는 게 목표였습니다. 그래서 선택한 조합은:
 
-- **모델**: Qwen2.5-1.5B-Instruct — 한국어 품질 대비 크기가 작고, 요약·간단 분석에 충분
+- **모델**: Qwen3.5-2B (추론 모드 끔) — 2B 크기로 이전 Qwen2.5-3B 보다 빠르고 가벼우면서 데이터 해석이 더 정확 (아래 1장 비교)
 - **양자화**: Q4_K_M (GGUF) — 정확도 손실을 최소화하면서 메모리 절감
 - **서빙**: llama.cpp의 `llama-server` — OpenAI 호환 `/v1/chat/completions` 제공
 - **운영**: systemd 로 상시 구동(Restart=always)
@@ -33,7 +33,7 @@ sequenceDiagram
     participant App as 앱 모듈 (stock/news/crypto)
     participant Client as llm/llm_client.py
     participant Server as llama-server (:8080)
-    participant Model as Qwen2.5-1.5B (GPU)
+    participant Model as Qwen3.5-2B (GPU)
 
     App->>Client: ask_llm(prompt)
     Client->>Server: POST /v1/chat/completions<br/>(system + user, temp=0.2)
@@ -45,22 +45,26 @@ sequenceDiagram
 
 ## 1. 모델 선정
 
-Xavier의 메모리 예산 안에서 후보 두 개를 받아 비교했습니다.
+처음에는 Qwen2.5-1.5B 로 시작해 Qwen2.5-3B 로 올렸고, 2026-10 에 **Qwen3.5-2B** 로 바꿨습니다.
+같은 시스템 프롬프트·같은 질문 5개(뉴스 요약, 지표 해석, 모르는 질문, 형식 지키기, 계산)로 비교한 결과입니다.
 
-| 모델 | 양자화 | 파일 크기 | 비고 |
-|---|---|---|---|
-| Qwen2.5-1.5B-Instruct | Q4_K_M | ~1.1 GB | **채택** — 응답 지연이 낮고 6.8GB에 여유 |
-| Qwen2.5-3B-Instruct | Q4_K_M | ~2.0 GB | 품질은 낫지만 컨텍스트 확보 시 메모리 빠듯 |
+| 모델 | 양자화 | 파일 | 생성 속도 | 메모리 | 비고 |
+|---|---|---|---|---|---|
+| Qwen2.5-3B-Instruct | Q4_K_M | 2.0 GB | 18~19 tok/s | +2.4 GB | 지표를 거꾸로 해석(이평 위/아래, 매수가 대비)하고 모르는 종가를 지어냄 |
+| **Qwen3.5-2B** | Q4_K_M | 1.3 GB | **24~25 tok/s** | **+1.9 GB** | **채택** — 요약·지표 해석이 더 정확, 모르면 모른다고 답함 |
+| Qwen3.5-4B | Q4_K_M | 2.7 GB | — | — | GPU 에 2.6 GB 를 한 덩어리로 잡아야 해서 Xavier 에서 로딩 실패 |
 
-1.5B로도 뉴스 요약과 종목 코멘트 수준에는 충분했고, 3B는 백업으로 보관만 합니다. GGUF는 Hugging Face의 Qwen2.5 GGUF 배포본에서 받아 `~/models/` 에 두었습니다.
+Qwen3.5 는 추론(thinking) 모델이라 `--reasoning off` 로 끄고 씁니다. 켜 두면 `max_tokens` 를 생각에 다 써 버립니다.
+작은 모델이라 계산·숫자는 여전히 틀릴 수 있어서, **숫자는 코드로 계산하고 LLM 은 문장만 쓰게** 합니다.
+GGUF 는 Hugging Face 의 `unsloth/Qwen3.5-2B-GGUF` 에서 받아 `~/models/` 에 둡니다.
 
 ```bash
 # 예시: GGUF 다운로드 후 배치
 mkdir -p ~/models
-# huggingface-cli 또는 wget 으로 qwen2.5-1.5b-instruct-q4_k_m.gguf 받기
+curl -L -o ~/models/Qwen3.5-2B-Q4_K_M.gguf \
+  https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q4_K_M.gguf
 ls ~/models
-# qwen2.5-1.5b-instruct-q4_k_m.gguf
-# qwen2.5-3b-instruct-q4_k_m.gguf
+# Qwen3.5-2B-Q4_K_M.gguf
 ```
 
 ## 2. llama.cpp CUDA 빌드
@@ -92,10 +96,11 @@ cmake --build build --config Release -j"$(nproc)"
 
 ```bash
 ~/llama.cpp/build/bin/llama-server \
-  -m ~/models/qwen2.5-1.5b-instruct-q4_k_m.gguf \
+  -m ~/models/Qwen3.5-2B-Q4_K_M.gguf \
   -c 2048 \
   -np 1 \
   -b 256 \
+  --reasoning off \
   --host 0.0.0.0 \
   --port 8080
 ```
@@ -105,6 +110,7 @@ cmake --build build --config Release -j"$(nproc)"
 | `-c` (context) | 2048 | 요약/분석 프롬프트에 충분, 메모리 절약 |
 | `-np` (parallel) | 1 | 단일 사용자, 슬롯 1개로 메모리 집중 |
 | `-b` (batch) | 256 | Xavier 대역폭에 맞춘 보수적 배치 |
+| `--reasoning` | off | Qwen3.5 의 생각(thinking) 출력을 끔 |
 | `--host` | 0.0.0.0 | 로컬 + 동일 네트워크 접근 허용 |
 
 ## 4. systemd 상시 구동
@@ -120,9 +126,11 @@ After=network.target
 [Service]
 User=user
 WorkingDirectory=/home/user/llama.cpp
+# 시작 직전에 디스크 캐시를 비운다(+ = root 로 실행). 아래 트러블슈팅 참고.
+ExecStartPre=+/bin/sh -c "sync; echo 3 > /proc/sys/vm/drop_caches"
 ExecStart=/home/user/llama.cpp/build/bin/llama-server \
-  -m /home/user/models/qwen2.5-1.5b-instruct-q4_k_m.gguf \
-  -c 2048 -np 1 -b 256 --host 0.0.0.0 --port 8080
+  -m /home/user/models/Qwen3.5-2B-Q4_K_M.gguf \
+  -c 2048 -np 1 -b 256 --reasoning off --host 0.0.0.0 --port 8080
 Restart=always
 RestartSec=10
 
@@ -178,7 +186,8 @@ curl -s http://127.0.0.1:8080/v1/chat/completions \
 
 ## 설계 메모 / 트러블슈팅
 
-- **메모리가 전부다**: 통합 메모리 6.8GB에서 OS·데스크톱까지 쓰면 여유가 크지 않습니다. 3B + 큰 컨텍스트를 동시에 잡으면 OOM 위험이 있어 1.5B / `-c 2048` 로 안정화했습니다.
+- **메모리가 전부다**: 통합 메모리 6.8GB에서 OS·데스크톱까지 쓰면 여유가 크지 않습니다. 모델은 2B 급 / `-c 2048` 로 둡니다.
+- **재시작 때 GPU 메모리를 못 잡는 문제**: 통합 메모리라 디스크 캐시가 많이 차 있으면 `cudaMalloc` 이 모델 크기의 덩어리를 못 잡고(`NvMapMemAllocInternalTagged ... error 12`) 로딩이 실패한 뒤 재시작만 반복할 수 있습니다. 서비스의 `ExecStartPre` 에서 캐시를 비워 막습니다.
 - **`max_tokens` 로 지연 관리**: 리포트 용도라 192로 제한. 길이를 늘리면 응답 지연이 선형으로 증가합니다.
 - **CUDA 아키텍처 명시 필수**: `-DCMAKE_CUDA_ARCHITECTURES=72` 를 빼면 GPU 커널이 안 맞아 CPU로 떨어지거나 빌드가 어긋납니다.
 - **ollama 는 보조**: 초기 테스트로 `ollama`(qwen2.5:0.5b)도 설치돼 있으나, 운영 서빙은 llama.cpp 단일 서버로 통일했습니다.

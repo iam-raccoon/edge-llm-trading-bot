@@ -1,6 +1,6 @@
 # Xavier NX AI — 로컬 LLM 기반 주식 뉴스 봇 & 코인 자동매매 봇
 
-NVIDIA **Jetson Xavier NX** 한 대 위에서 **로컬 LLM(llama.cpp + Qwen2.5)** 을 직접 서빙하고,
+NVIDIA **Jetson Xavier NX** 한 대 위에서 **로컬 LLM(llama.cpp + Qwen3.5)** 을 직접 서빙하고,
 그 위에 **주식 뉴스 요약 봇**과 **코인 자동매매 봇**을 올린 온디바이스 개인 AI 비서입니다.
 
 > 외부 LLM API(OpenAI 등) 없이, 모델 추론까지 전부 이 작은 보드 안에서 돌아갑니다.
@@ -31,7 +31,7 @@ NVIDIA **Jetson Xavier NX** 한 대 위에서 **로컬 LLM(llama.cpp + Qwen2.5)*
    Naver 뉴스 API ──────┼──▶  news / market / stock ──┐                                        │
                         │                              │  요약·판단 요청                        │
    Upbit 시세/주문 ─────┼──▶  crypto (auto_trader) ────┼──▶  llm_client ──▶ llama-server :8080  │
-                        │                              │                    (Qwen2.5-1.5B)     │
+                        │                              │                    (Qwen3.5-2B)       │
    yfinance 주가 ───────┼──▶  stock / market ──────────┘                                        │
                         │                                                                      │
                         │  결과 알림/리포트  ──▶  bot (telegram)                                 │
@@ -51,7 +51,7 @@ NVIDIA **Jetson Xavier NX** 한 대 위에서 **로컬 LLM(llama.cpp + Qwen2.5)*
 
 **목표:** 클라우드 API 없이, 엣지 디바이스에서 LLM 추론을 상시 제공한다.
 
-1. **모델** — `Qwen2.5-1.5B-Instruct` 를 `Q4_K_M`(4비트 양자화, GGUF) 로 사용.
+1. **모델** — `Qwen3.5-2B` 를 `Q4_K_M`(4비트 양자화, GGUF) 로, 추론 모드를 끄고(`--reasoning off`) 사용.
    8GB 메모리의 Xavier NX 에서도 GPU 로 돌릴 수 있을 만큼 가볍습니다.
 2. **서빙** — `llama.cpp` 를 `GGML_CUDA=ON` 으로 빌드해 Jetson GPU(sm_72)에서 구동.
    `llama-server` 가 **OpenAI 호환** 챗 API 를 `127.0.0.1:8080` 에 노출합니다.
@@ -319,7 +319,7 @@ python crypto/htf_performance.py   # 매매 성과 확인
 | 디바이스 | NVIDIA Jetson Xavier NX (8GB, sm_72) |
 | OS / 런타임 | L4T R35.6 (JetPack 5.x), CUDA 11.4, Python 3.8 |
 | LLM 서빙 | llama.cpp (GGML_CUDA=ON), llama-server |
-| 모델 | Qwen2.5-1.5B-Instruct (Q4_K_M, GGUF) |
+| 모델 | Qwen3.5-2B (Q4_K_M, GGUF, 추론 모드 끔) |
 | 데이터 | Upbit API, Naver 뉴스 API, yfinance |
 | 봇/알림 | python-telegram-bot |
 | 운영 | systemd, cron |
